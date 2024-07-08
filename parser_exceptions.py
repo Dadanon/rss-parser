@@ -1,0 +1,2 @@
+class FeedTypeError(Exception):
+    pass

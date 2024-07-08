@@ -1,4 +1,5 @@
 import re
+from enum import IntEnum
 from typing import Optional, List
 
 import requests
@@ -10,6 +11,7 @@ def _get_items(content: str) -> List[re.Match[str]]:
 
 patterns = {
     'ensure_rss': r'<rss[^>].*?>',
+    'ensure_atom': r'<feed xmlns="http://www.w3.org/2005/Atom">',
     'get_channel_info': r'<channel>(.*?)<item>',
     'get_channel_title': r'',
     'get_channel_title_and_description': r'<channel>.*?<title>(.*?)</title>.*?<description>(.*?)</description>',
@@ -38,6 +40,11 @@ class Item:
             raise ValueError('Either title or description should be set')
 
 
+class FeedType(IntEnum):
+    RSS = 0
+    ATOM = 1
+
+
 channels = {
     'RBC': 'https://rssexport.rbc.ru/rbcnews/news/20/full.rss',
     'Habr': 'https://habr.com/ru/rss/articles/',
@@ -56,11 +63,9 @@ def _get_channel_content(channel_rss_link: str) -> Optional[str]:
     if channel_rss_link:
         try:
             channel_content: str = requests.get(channel_rss_link, timeout=5, verify=False).text
+            return channel_content
         except (requests.exceptions.ReadTimeout, requests.exceptions.ProxyError):
             return None
-        is_rss = re.search(patterns['ensure_rss'], channel_content, re.DOTALL)
-        if is_rss:
-            return channel_content
 
 
 def _get_text_without_tags(text: str) -> str:
@@ -88,8 +93,10 @@ def _get_text_without_tags(text: str) -> str:
         .replace('&nbsp;', ' ')
         .replace(u'\xa0', u' ')
         .replace('&mdash;', '-')
-        .replace(' &laquo;', '"')
-        .replace(' &raquo;', '"')
+        .replace('&laquo;', '"')
+        .replace('&raquo;', '"')
+        .replace('&apos;', '\'')
+        .replace('&quot;', '"')
     )
 
     pretty_text = re.sub('\s+', ' ', pretty_text)
