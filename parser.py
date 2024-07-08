@@ -3,7 +3,11 @@ import time
 
 from typing import Optional, Dict, Tuple
 
-from general import _get_channel_content, channels, patterns, Item, _get_text_without_tags, FeedType, \
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+
+from general import _get_link_content, channels, patterns, Item, _get_text_without_tags, FeedType, \
     FEED_TYPE_PATTERN_DICT
 from parser_exceptions import FeedTypeError
 
@@ -18,10 +22,11 @@ class RSSParser:
     _channel_description: str
     _items_dict: Dict[int, Item]
     _patterns_dict: dict  # Словарь шаблонов в зависимости от self._feed_type
+    _chrome_options: Options  # Параметр для эмуляции пользователя при получении контента страницы
 
     def __init__(self, channel_rss_link: str):
         self._items_dict = {}
-        self._channel_content = _get_channel_content(channel_rss_link)
+        self._channel_content = _get_link_content(channel_rss_link)
         if not self._channel_content:
             raise ValueError(f"Не удалось спарсить RSS контент по указанной ссылке: {channel_rss_link}")
         is_rss = re.search(patterns['ensure_rss'], self._channel_content, re.DOTALL)
@@ -39,6 +44,9 @@ class RSSParser:
             self._channel_title, self._channel_description = title_and_description
         self._set_items_dict()
         self._current_item_index = -1
+        self._chrome_options = Options()
+        self._chrome_options.add_argument('--headless')
+        self._chrome_options.add_argument('--disable-gpu')
 
     # INFO: private methods
 
@@ -115,6 +123,16 @@ class RSSParser:
     def items_length(self) -> int:
         return len(self._items_dict)
 
+    def get_item_content(self) -> Optional[str]:
+        current_item_link = self._items_dict.get(self._current_item_index).link
+        if current_item_link:
+            driver = webdriver.Chrome(options=self._chrome_options)
+            print(f'\n\n\nCurrent item: {self._items_dict.get(self._current_item_index).__dict__}\n\n\n')
+            print(f'\n\n\nCurrent url: {current_item_link}\n\n\n')
+            driver.get(current_item_link)
+            body_text = driver.find_element(By.TAG_NAME, 'body').text  # Пока самое простое - получаем текст тега body
+            return body_text
+
 
 def test_rss(channel_rss_link: str):
     try:
@@ -134,5 +152,28 @@ def test_rss(channel_rss_link: str):
         return
 
 
-for _, channel_link in channels.items():
-    test_rss(channel_link)
+# for _, channel_link in channels.items():
+#     test_rss(channel_link)
+
+
+def test_item_detail(channel_rss_link: str):
+    try:
+        start_time = time.time()
+        parser = RSSParser(channel_rss_link)
+
+        next_item: Optional[Item] = parser.get_next()
+        if next_item:
+            print(parser.get_item_content())
+
+        end_time = time.time()
+        print(f'\n\nTotal time: {end_time - start_time}')
+    except (ValueError, FeedTypeError) as e:
+        print(f'Error: {e}')
+        return
+
+
+# for _, channel_link in channels.items():
+#     test_item_detail(channel_link)
+
+
+test_item_detail(channels.get('RBC'))

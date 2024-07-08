@@ -93,10 +93,10 @@ channels = {
 }
 
 
-def _get_channel_content(channel_rss_link: str) -> Optional[str]:
-    if channel_rss_link:
+def _get_link_content(link: str) -> Optional[str]:
+    if link:
         try:
-            channel_content: str = requests.get(channel_rss_link, timeout=5, verify=False).text
+            channel_content: str = requests.get(link, timeout=5, verify=False).text
             return channel_content
         except (requests.exceptions.ReadTimeout, requests.exceptions.ProxyError):
             return None
