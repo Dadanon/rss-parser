@@ -1,9 +1,10 @@
 import re
 import time
 
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
-from general import _get_channel_content, channels, patterns, Item, _get_text_without_tags, FeedType
+from general import _get_channel_content, channels, patterns, Item, _get_text_without_tags, FeedType, \
+    FEED_TYPE_PATTERN_DICT
 from parser_exceptions import FeedTypeError
 
 """Эти данные будут храниться в БД"""
@@ -13,7 +14,10 @@ class RSSParser:
     _feed_type: FeedType
     _current_item_index: int
     _channel_content: str
+    _channel_title: str
+    _channel_description: str
     _items_dict: Dict[int, Item]
+    _patterns_dict: dict  # Словарь шаблонов в зависимости от self._feed_type
 
     def __init__(self, channel_rss_link: str):
         self._items_dict = {}
@@ -29,57 +33,65 @@ class RSSParser:
                 self._feed_type = FeedType.ATOM
             else:
                 raise FeedTypeError("Неизвестный формат файла: не RSS и не Atom")
-
+        self._patterns_dict = FEED_TYPE_PATTERN_DICT.get(self._feed_type)
+        title_and_description = self._get_channel_title_and_description()
+        if title_and_description:
+            self._channel_title, self._channel_description = title_and_description
         self._set_items_dict()
         self._current_item_index = -1
 
     # INFO: private methods
 
+    def _get_channel_title_and_description(self) -> Optional[Tuple[str, str]]:
+        channel_info_match = re.search(self._patterns_dict.get('get_channel_info'), self._channel_content, re.DOTALL)
+        if channel_info_match:
+            pretty_title, pretty_description = None, None
+            pretty_title_match = re.search(patterns['get_item_title'], channel_info_match.group(1), re.DOTALL)
+            if pretty_title_match:
+                pretty_title = _get_text_without_tags(pretty_title_match.group(1))
+            pretty_description_match = re.search(self._patterns_dict.get('get_item_description'),
+                                                 channel_info_match.group(1),
+                                                 re.DOTALL)
+            if pretty_description_match:
+                pretty_description = _get_text_without_tags(pretty_description_match.group(1))
+            return pretty_title, pretty_description
+
     def _set_items_dict(self):
-        item_matches = re.finditer(patterns['get_items'], self._channel_content, re.DOTALL)
+        item_matches = re.finditer(self._patterns_dict.get('get_items'), self._channel_content, re.DOTALL)
         start_index = 0
         for item_match in item_matches:
             item_str = item_match.group(1)
 
             item_title_match = re.search(patterns['get_item_title'], item_str, re.DOTALL)
-            item_link_match = re.search(patterns['get_item_link'], item_str, re.DOTALL)
-            item_description_match = re.search(patterns['get_item_description'], item_str, re.DOTALL)
+            item_link_match = re.search(self._patterns_dict.get('get_item_link'), item_str, re.DOTALL)
+            item_description_match = re.search(self._patterns_dict.get('get_item_description'), item_str, re.DOTALL)
 
             item_title = item_title_match.group(1) if item_title_match else None
             item_link = item_link_match.group(1) if item_link_match else None
-            item_description = item_description_match.group(1) if item_description_match else None
+            try:
+                item_description_type, item_description = _get_text_without_tags(item_description_match.group(1)), _get_text_without_tags(item_description_match.group(2))
+            except IndexError:
+                item_description, item_description_type = item_description_match.group(1), None
 
-            item: Item = Item(item_title, item_link, item_description)
+            item: Item = Item(item_title, item_link, item_description, item_description_type)
             self._items_dict[start_index] = item
             start_index += 1
 
     def _prettify_item(self) -> Optional[Item]:
         current_item = self._items_dict.get(self._current_item_index)
         if current_item:
-            pretty_title_match = re.search(patterns['get_pretty_param'], current_item.title, re.DOTALL)
-            pretty_description_match = re.search(patterns['get_pretty_param'], current_item.description, re.DOTALL)
-
-            pretty_title = pretty_title_match.group(1) if pretty_title_match else current_item.title
-            pretty_description = pretty_description_match.group(
-                1) if pretty_description_match else current_item.description
-            pretty_description = _get_text_without_tags(pretty_description)
-            pretty_title = _get_text_without_tags(pretty_title)
+            if not current_item.description_type or current_item.description_type == 'html':
+                pretty_description = _get_text_without_tags(current_item.description)
+            else:
+                pretty_description = current_item.description
+            pretty_title = _get_text_without_tags(current_item.title)
             pretty_item: Item = Item(pretty_title, current_item.link, pretty_description)
             return pretty_item
 
     # INFO: public methods
 
     def get_channel_title_and_description(self) -> Optional[Dict[Optional[str], Optional[str]]]:
-        channel_info_match = re.search(patterns['get_channel_info'], self._channel_content, re.DOTALL)
-        if channel_info_match:
-            pretty_title, pretty_description = None, None
-            pretty_title_match = re.search(patterns['get_item_title'], channel_info_match.group(1), re.DOTALL)
-            if pretty_title_match:
-                pretty_title = _get_text_without_tags(pretty_title_match.group(1))
-            pretty_description_match = re.search(patterns['get_item_description'], channel_info_match.group(1), re.DOTALL)
-            if pretty_description_match:
-                pretty_description = _get_text_without_tags(pretty_description_match.group(1))
-            return {'title': pretty_title, 'description': pretty_description}
+        return {'title': self._channel_title, 'description': self._channel_description}
 
     def get_next(self) -> Optional[Item]:
         next_index = self._current_item_index + 1
@@ -105,22 +117,22 @@ class RSSParser:
 
 
 def test_rss(channel_rss_link: str):
-    start_time = time.time()
-    parser = RSSParser(channel_rss_link)
-    print(parser.get_channel_title_and_description())
-    print(parser.get_next().__dict__)
-    print(parser.get_next().__dict__)
-    print(parser.get_next().__dict__)
+    try:
+        start_time = time.time()
+        parser = RSSParser(channel_rss_link)
 
-    print(parser.get_prev().__dict__)
-    print(parser.get_prev().__dict__)
-    print(parser.get_prev().__dict__)
+        print(parser.get_channel_title_and_description())
+        print(parser.get_next().__dict__)
+        print(parser.get_prev().__dict__)
+        print(parser.get_first().__dict__)
+        print(parser.get_last().__dict__)
 
-    print(parser.get_first().__dict__)
-    print(parser.get_last().__dict__)
+        end_time = time.time()
+        print(f'Total time: {end_time - start_time}')
+    except (ValueError, FeedTypeError) as e:
+        print(f'Error: {e}')
+        return
 
-    end_time = time.time()
-    print(f'Total time: {end_time - start_time}')
 
-
-test_rss(channels.get('RBC'))
+for _, channel_link in channels.items():
+    test_rss(channel_link)
